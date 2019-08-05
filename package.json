@@ -1,0 +1,11 @@
+{
+  "name": "nstruct",
+  "version": "1.0.0",
+  "description": "nodejs struct like C language",
+  "main": "nstruct.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "zhaopuyang",
+  "license": "ISC"
+}
