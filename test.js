@@ -1,4 +1,4 @@
-var NStruct = require('./nstruct');
+var NStruct = require('nstruct');
 
 var ns = new NStruct();
 
