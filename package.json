@@ -1,6 +1,6 @@
 {
   "name": "nstruct",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "nodejs struct like C Language",
   "main": "nstruct.js",
   "scripts": {
