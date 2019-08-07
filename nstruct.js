@@ -1,7 +1,7 @@
 /*!
  *  nstruct JavaScript Library v1.0
  *  Author: zhaopuyang
- *  Date:   2019-08-05
+ *  Date:   2019-08-07
  *  City:   Harbin in China
  */
 'use scrict'
@@ -19,7 +19,20 @@ type_map.set('Float', 4);
 type_map.set('Double', 8);
 type_map.set('Char', 1);
 
-function clone(obj) {
+/**
+ * 
+ * @param {*} order (BE:big Endian  |   LE:little Endian)
+ */
+function NStruct(order = 'BE') {
+    this.$order = order;
+}
+
+var fn = NStruct.prototype;
+
+/**
+ *   clone object
+ */
+fn.clone = function (obj) {
     var o;
     if (typeof obj == "object") {
         if (obj === null) {
@@ -27,101 +40,149 @@ function clone(obj) {
         } else {
             o = {};
             for (var k in obj) {
-                o[k] = clone(obj[k]);
+                o[k] = this.clone(obj[k]);
             }
         }
     } else {
         o = obj;
     }
     return o;
-};
-/**
- * 
- * @param {*} struct     object template
- * @param {*} byteorder  Big endian or little endian mode default:Big('BE')
- */
-function nstruct(struct, byteorder = 'BE') {
-    return {
-        _struct: struct,
-        _structObject: clone(struct),
-        _sizeofBytes: 0,
-        _offsetIndex: 0,
-        _byteorder: byteorder,
-        __sizeof__: function (obj) {
-            if (typeof obj === 'object') {
-                for (var key in obj) {
-                    this.__sizeof__(obj[key]);
-                }
-            }
-            if (typeof obj === 'string') {
-                var data = (/(\w+)(\[(\d+)\])*/g).exec(obj);
-                if (data) {
-                    var type_array_len = data[3];
-                    this._sizeofBytes += (type_map.get(data[1])) * (type_array_len == undefined ? 1 : parseInt(type_array_len));
-                }
-            }
-        },
-        sizeof: function (obj) {
-            this.__sizeof__(obj);
-            var result = this._sizeofBytes;
-            this._sizeofBytes = 0;
-            return result;
-        },
-        __offset__: function (obj, field) {
-            for (var key in obj) {
-                if (key === field) {
-                    return this._offsetIndex;
-                }
-                this._offsetIndex += this.sizeof(obj[key]);
-            }
-        },
-        offset: function (obj, field) {
-            this.__offset__(obj, field);
-            var result = this._offsetIndex;
-            this._offsetIndex = 0;
-            return result;
-        },
-        /**
-         * 
-         * @param {*} buffer nodejs Buffer
-         * @param {*} obj    object template
-         * @param {*} structobject object template object instance
-         */
-        resolve: function (buffer, obj = this._struct, structobject = this._structObject) {
-            if (buffer.length < this.sizeof(obj)) return "buffer is too short!";
-            for (var key in obj) {
-                var start = this.offset(obj, key);
-                var end = start + this.sizeof(obj[key]);
-                var buf_bytes = buffer.slice(start, end);
-                if (typeof obj[key] === 'string') {
-                    (/(\w+)(\[(\d+)\])*/g).exec(obj[key]);
-                    var type = RegExp.$1;
-                    var len = RegExp.$3;
-                    var strbyteorder = type_map.get(type) != 1 ? this._byteorder : '';
-                    if (len == "") {
-                        if (type !== 'Char') {
-                            structobject[key] = eval('buf_bytes.read' + type + (strbyteorder) + '()');
-                        } else {
-                            structobject[key] = buf_bytes.toString('ascii');
-                        }
-                    } else {
-                        structobject[key] = [];
-                        len = parseInt(len);
-                        for (var i = 0; i < len; i++) {
-                            if (type !== 'Char') {
-                                structobject[key].push(eval('buf_bytes.read' + type + (strbyteorder) + '(' + i + ')'));
-                            } else {
-                                structobject[key].push(String.fromCharCode(buf_bytes[i]));
-                            }
-                        }
-                    }
-                } else if (typeof obj[key] === 'object') {
-                    this.resolve(buf_bytes, obj[key], structobject[key]);
-                }
-            }
-            return structobject;
-        }
-    }
 }
 
-module.exports = nstruct
+/**
+ *   verify type in template
+ */
+fn.verify = function (template) {
+    if (typeof template !== 'object') {
+        (/(\w+)(\[(\d+)\])*/g).exec(template);
+        var type = RegExp.$1;
+        if (!type_map.has(type)) {
+            throw new Error('Error type found in template!')
+        }
+        return;
+    }
+    Object.keys(template).forEach(key => {
+        if (typeof template[key] !== 'object') {
+            (/(\w+)(\[(\d+)\])*/g).exec(template[key]);
+            var type = RegExp.$1;
+            if (!type_map.has(type)) {
+                throw new Error('Error type found in template!')
+            }
+        } else {
+            this.verify(template[key]);
+        }
+    })
+}
+/**
+ *   calculate bytes of template
+ */
+fn.sizeof = function (template) {
+    this.verify(template);
+    if (typeof template !== 'object') {
+        (/(\w+)(\[(\d+)\])*/g).exec(template);
+        var type = RegExp.$1;
+        var type_array_len = RegExp.$3;
+        var size = type_array_len == "" ? type_map.get(type) : type_map.get(type) * parseInt(type_array_len);
+        return size;
+    }
+    template.$size = 0;
+    for (var key in template) {
+        if (key == '$size') continue;
+        if (typeof template[key] !== 'object') {
+            (/(\w+)(\[(\d+)\])*/g).exec(template[key]);
+            var type = RegExp.$1;
+            var type_array_len = RegExp.$3;
+            if (type_array_len == "") {
+                template.$size += type_map.get(type);
+            } else {
+                template.$size += type_map.get(type) * parseInt(type_array_len);
+            }
+        } else {
+            template.$size += this.sizeof(template[key]);
+        }
+    }
+    var size = template.$size;
+    delete template.$size;
+    return size;
+}
+/**
+ *   calculate field offset in template
+ */
+fn.offset = function (template, field) {
+    this.verify(template);
+    if (typeof template !== 'object') {
+        throw new Error('template must be an object type!')
+    }
+    var index = 0;
+    for (var key in template) {
+        if (key === field) break;
+        index += this.sizeof(template[key]);
+    }
+    return index;
+}
+/**
+ *   convert to struct from buffer
+ */
+fn.bufferToStruct = function (buffer, template) {
+    if (this.sizeof(template) > buffer.length) {
+        throw new Error('buffer is too short!');
+    }
+    var struct = this.clone(template);
+    for (var key in template) {
+        var start = this.offset(template, key);
+        var end = start + this.sizeof(template[key]);
+        var buf_bytes = buffer.slice(start, end);
+        if (typeof template[key] === 'object') {
+            struct[key] = this.bufferToStruct(buf_bytes, template[key]);
+        } else {
+            (/(\w+)(\[(\d+)\])*/g).exec(template[key]);
+            var type = RegExp.$1;
+            var len = RegExp.$3;
+            var strbyteorder = type_map.get(type) != 1 ? this.$order : '';
+            if (len == "") {
+                struct[key] = (type !== 'Char') ? eval('buf_bytes.read' + type + (strbyteorder) + '()') : buf_bytes.toString('ascii');
+            } else {
+                struct[key] = [];
+                len = parseInt(len);
+                for (var i = 0; i < len; i++) {
+                    (type !== 'Char') ? struct[key].push(eval('buf_bytes.read' + type + (strbyteorder) + '(' + i + ')')): struct[key].push(String.fromCharCode(buf_bytes[i]));
+                }
+            }
+        }
+    }
+    return struct;
+}
+/**
+ *  convert to buffer from struct
+ */
+fn.structToBuffer = function (struct, template) {
+    var buffer = Buffer.alloc(this.sizeof(template));
+    for (var key in template) {
+        var start = this.offset(template, key);
+        var end = start + this.sizeof(template[key]);
+        var subarray_buffer = buffer.subarray(start, end);
+        if (typeof template[key] === 'object') {
+            var obj_buffer = this.structToBuffer(struct[key], template[key]);
+            var index = 0;
+            for (var value of obj_buffer.values()) {
+                subarray_buffer[index++] = value;
+            }
+        } else {
+            (/(\w+)(\[(\d+)\])*/g).exec(template[key]);
+            var type = RegExp.$1;
+            var len = RegExp.$3;
+            var strbyteorder = type_map.get(type) != 1 ? this.$order : '';
+            if (len == "") {
+                (type !== 'Char') ? eval('subarray_buffer.write' + type + (strbyteorder) + '(' + struct[key] + ')'): subarray_buffer[0] = struct[key].charCodeAt(0);
+            } else {
+                len = parseInt(len);
+                for (var i = 0; i < len; i++) {
+                    (type !== 'Char') ? eval('subarray_buffer.write' + type + (strbyteorder) + '(' + struct[key][i] + ',' + i + ')'): subarray_buffer[i] = struct[key][i].charCodeAt(0);
+                }
+            }
+        }
+    }
+    return buffer;
+}
+
+module.exports = NStruct
